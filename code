@@ -1,0 +1,683 @@
+        //BIBLIOTHEQUE ET OBJETS
+#include <Wire.h>  // Bibliothèque pour la communication I2C
+#include <RTClib.h> // Bibliothèque pour la gestion de l'horloge temps réel (RTC)
+RTC_DS3231 rtc; // Créer un objet RTC DS3231
+
+#include <LiquidCrystal_I2C.h>
+#define I2C_ADDRESS 0x27
+LiquidCrystal_I2C lcd(I2C_ADDRESS, 20, 4);
+
+#include <DHT.h> 
+DHT dht(14 , DHT11);
+#include <IRremote.h>
+const int irReceiverPin = 49;
+IRrecv irrecv(irReceiverPin);
+decode_results results;
+#include <SR04.h>
+SR04 sr04=SR04(19,22);//le 22 cest trig
+
+       //CONFORT
+ 
+#define VENTILATEUR_PIN 8 
+#define VENTILATEUR_PIN2 28
+int TEMPERATURE_MAX =31; 
+int TEMPERATURE_MIN =20; 
+float temperature = 0;
+float humidity = 0;
+int vitesseVentilateur1 = 0;
+int manuel = 0;
+
+       //SECUIRITE
+const int flameSensorPin = 15;
+//int gasSensorPin = A0;
+const int gasSensorPin = 32;
+const int buzzerPin = 7;
+boolean flameDetected;
+//int gasIntensity = 0;
+boolean gasIntensity;
+
+       //LUMIERES
+//LED RGB
+const int pinRouge = 2;
+const int pinVert = 3;
+const int pinBleu = 4;
+int actRGB=0;
+int count = 0;
+boolean son;
+//#define sensorAnalogPin A2
+#define sensorAnalogPin 33
+
+
+//LUMIERE PIECES
+const int LED1 = 11;
+const int LED2 = 12;
+const int LED3 = 13;
+const int LED4 = 29;
+int act = 0;
+boolean tous = false;
+boolean red = false;
+boolean vert = false;
+boolean bleu = false;
+
+int reglerRed = 255;
+int reglerVert = 255;
+int reglerBleu = 255;
+
+const int BP1 = 24; 
+const int BP2 = 25;
+const int BP3 = 26;
+const int BP4 = 27;
+
+//LEDj
+int photo = A1;
+int LEDj = 6;
+
+//TOILETTE
+long distance;
+#define LEDt 30
+
+//COULOIR
+#define LEDc 31
+#define pirPin 17
+boolean mouvement; 
+void setup() {
+  Serial.begin(9600);
+  lcd.begin(16, 2); 
+
+  Wire.begin();// Initialisez la communication I2C
+  rtc.begin();
+  // Si l'horloge temps réel n'est pas réglée, vous pouvez la régler manuellement avec la ligne suivante :
+  rtc.adjust(DateTime(__DATE__, __TIME__));
+  
+  dht.begin();
+  pinMode(VENTILATEUR_PIN, OUTPUT);
+  digitalWrite(VENTILATEUR_PIN, LOW);
+  pinMode(VENTILATEUR_PIN2, OUTPUT);
+  digitalWrite(VENTILATEUR_PIN2, LOW);
+  
+  irrecv.enableIRIn();
+
+  pinMode(flameSensorPin, INPUT);
+  pinMode(gasSensorPin, INPUT);
+  pinMode(buzzerPin, OUTPUT);
+
+        //LUMIERES
+ //SALON
+  pinMode(pinRouge, OUTPUT);
+  pinMode(pinVert, OUTPUT);
+  pinMode(pinBleu, OUTPUT);
+  pinMode(sensorAnalogPin, INPUT);
+
+  //PIECES
+  pinMode(BP1, INPUT_PULLUP);
+  pinMode(BP2, INPUT_PULLUP);
+  pinMode(BP3, INPUT_PULLUP);
+  pinMode(BP4, INPUT_PULLUP);
+
+  pinMode(LED1, OUTPUT);
+  pinMode(LED2, OUTPUT);
+  pinMode(LED3, OUTPUT);
+  pinMode(LED4, OUTPUT);
+
+  //LEDj
+  pinMode(photo, INPUT);
+  pinMode(LEDj, OUTPUT);
+
+  //CUISINE
+  pinMode(LEDt, OUTPUT);
+
+  //COULOIR
+  pinMode(LEDc, OUTPUT);
+  pinMode(pirPin, INPUT);
+
+  lcd.init();
+  // Allume le rétroéclairage (en général, il s'allume par défaut)
+  lcd.backlight();
+}
+
+void loop() {//DEBUT LOOP
+
+  temperature = dht.readTemperature();
+  humidity = dht.readHumidity();
+  Serial.println("t");
+  Serial.println(temperature);
+
+  flameDetected = digitalRead(flameSensorPin);
+  gasIntensity = digitalRead(gasSensorPin);
+  
+  
+  if (irrecv.decode(&results)) {
+     confortManuel();
+    lumieresManuelTelecomande();
+    irrecv.resume();
+  }
+  RGBAuplaudissementEtCouleurs();
+  lumiereManuelInterupteur();
+  confortAutomatique();
+  lumieresAutomatique();
+  secuirite();
+     
+}//FIN LOOP
+
+
+      //DANS LES CONDITIONS NORMAL
+void confortAutomatique() {//CONDITIONS NORMAL
+  lcd.setCursor(0, 0);
+  lcd.print("Le");
+  DateTime now = rtc.now(); // Obtenir l'heure actuelle depuis l'horloge temps réel
+  if (now.day() < 10) lcd.print('0'); // Ajoutez un zéro devant le jour si nécessaire
+  lcd.print(now.day());
+  lcd.print('/');
+  if (now.month() < 10) lcd.print('0'); // Ajoutez un zéro devant le mois si nécessaire
+  lcd.print(now.month());
+  lcd.print('/');
+  lcd.print(now.year()); 
+  lcd.print(" a ");
+  if (now.hour() < 10) lcd.print('0'); // Ajoutez un zéro devant l'heure si nécessaire
+  lcd.print(now.hour());
+  lcd.print(':');
+  if (now.minute() < 10) lcd.print('0'); // Ajoutez un zéro devant les minutes si nécessaire
+  lcd.print(now.minute());
+
+  // Afficher tempeture et humidite
+  lcd.setCursor(0, 1);
+  lcd.print("T:");
+  lcd.print(temperature);
+  lcd.print("'C");
+  lcd.print(' ');
+  lcd.print("H:");
+  lcd.print(humidity);
+  lcd.print('%');
+
+  //Ventilateur automatique
+  if (manuel == 0 && (flameDetected == HIGH && gasIntensity == HIGH)) {
+    if (temperature >= TEMPERATURE_MAX) {
+      vitesseVentilateur1 = 255;
+    }
+    else if (temperature <= TEMPERATURE_MIN) {
+      vitesseVentilateur1 = 0;
+
+    } else {// Sinon, ajuster l'intensité en fonction de la valeur lue
+      vitesseVentilateur1 = map(temperature, TEMPERATURE_MIN, TEMPERATURE_MAX, 0.00, 255.00);
+    }
+    analogWrite(VENTILATEUR_PIN, vitesseVentilateur1);
+ lcd.setCursor(0, 2);
+  lcd.print("                   ");
+  lcd.setCursor(0, 2);
+  lcd.print("Vitesse : ");
+  lcd.print(vitesseVentilateur1);
+  }
+}//FIN CONDITIONS NORMAL
+
+
+
+               //SYSTEME DE CONFORT MANUEL
+
+void confortManuel() {//DEBUT CONFORT MANUEL
+
+  if ((results.value == 0xFF6897)&&(flameDetected == HIGH)) {//*
+    if (manuel == 0) {
+     lcd.setCursor(0, 2);
+      lcd.print("                    ");
+     lcd.setCursor(0, 2);
+      lcd.print("v1 Manuel ");
+      delay(2000);
+      lcd.setCursor(0, 2);
+       lcd.print("                    ");
+      lcd.setCursor(0, 2);
+      lcd.print("Vitesse: ");
+      lcd.print(vitesseVentilateur1);
+      manuel = 1;
+    } else {
+      lcd.setCursor(0, 2);
+      lcd.print("                    ");
+      lcd.setCursor(0, 2);
+      lcd.print("v1 Automatique");
+      delay(2000);
+      //lcd.print("              ");
+      manuel = 0;
+    }
+
+  }
+  if ((results.value == 0xFF18E7) && manuel == 1) { //|
+    vitesseVentilateur1 += 51;
+    if (vitesseVentilateur1 > 255) {
+      vitesseVentilateur1 = 255;
+    }
+  lcd.setCursor(0, 2);
+   lcd.print("                    ");
+  lcd.setCursor(0, 2);
+  lcd.print("Vitesse: ");
+  lcd.print(vitesseVentilateur1);
+  //delay(1000);
+  analogWrite(VENTILATEUR_PIN, vitesseVentilateur1);
+  }
+  else if ((results.value == 0xFF4AB5) && manuel == 1) { //<|
+    vitesseVentilateur1 -= 51;
+    if (vitesseVentilateur1 < 51) {
+      vitesseVentilateur1 = 0;
+    }
+  lcd.setCursor(0, 2);
+   lcd.print("                    ");
+  lcd.setCursor(0, 2);
+  lcd.print("Vitesse: ");
+  lcd.print(vitesseVentilateur1);
+  //delay(1000);
+  analogWrite(VENTILATEUR_PIN, vitesseVentilateur1);
+ }
+ 
+  
+}// FIN CONFORT MANUEL
+
+
+
+
+
+
+
+         //SYSTEME DE SECUIRITE
+void secuirite() {//DEBUT SECUIRITE
+    //gasIntensity=digitalRead(gasSensorPin);
+    lcd.setCursor(0, 3);
+    lcd.print("                    ");
+ if (flameDetected == LOW && gasIntensity == LOW) {
+    vitesseVentilateur1=0;
+    analogWrite(VENTILATEUR_PIN, vitesseVentilateur1);
+    digitalWrite(VENTILATEUR_PIN2, LOW);
+    analogWrite(buzzerPin, 200);
+    Serial.print(gasIntensity);
+    lcd.setCursor(0, 3);
+    lcd.print("                    ");
+    lcd.setCursor(0, 3);
+    lcd.print("Alerte:Incendie gaz!");
+    delay(200);//OPTIONNEL
+    lcd.setCursor(0, 3);
+    lcd.print("                    ");
+    delay(200);//OPTIONNEL
+    lcd.setCursor(0, 3);
+    lcd.print("Alerte:Incendie gaz!");
+
+
+    
+  lcd.setCursor(0, 2);
+  lcd.print("                   ");
+  lcd.setCursor(0, 2);
+  lcd.print("Vitesse : ");
+  lcd.print(vitesseVentilateur1);
+  } else if (flameDetected == LOW) {
+    vitesseVentilateur1=0;
+    analogWrite(VENTILATEUR_PIN, vitesseVentilateur1);
+    analogWrite(buzzerPin, 128);
+    lcd.setCursor(0, 3);
+    lcd.print("                    ");
+    lcd.setCursor(0, 3);
+    lcd.print("Alerte : Incendie !");
+    delay(128);//OPTIONNEL
+    lcd.setCursor(0, 3);
+    lcd.print("                    ");
+    delay(128);//OPTIONNEL
+    lcd.setCursor(0, 3);
+    lcd.print("Alerte : Incendie !");
+
+
+  lcd.setCursor(0, 2);
+  lcd.print("                   ");
+  lcd.setCursor(0, 2);
+  lcd.print("Vitesse : ");
+  lcd.print(vitesseVentilateur1);
+   
+  } else if (gasIntensity == LOW) {
+    vitesseVentilateur1=255;
+    analogWrite(VENTILATEUR_PIN, vitesseVentilateur1);
+    digitalWrite(VENTILATEUR_PIN2, HIGH);
+    analogWrite(buzzerPin, 128);
+    //lcd.print(gasIntensity);
+    lcd.setCursor(0, 3);
+    lcd.print("                    ");
+    lcd.setCursor(0, 3);
+    lcd.print("Alerte :  gaz!");
+    delay(128);//OPTIONNEL
+    lcd.setCursor(0, 3);
+    lcd.print("                    ");
+    delay(128);//OPTIONNEL
+    lcd.setCursor(0, 3);
+    lcd.print("Alerte : gaz!");
+
+
+  lcd.setCursor(0, 2);
+  lcd.print("                   ");
+  lcd.setCursor(0, 2);
+  lcd.print("Vitesse : ");
+  lcd.print(vitesseVentilateur1);
+
+  } else {
+    // Si ni la flamme ni les gaz ne sont détectés, désactivez le buzzer et effacez l'écran LCD
+    analogWrite(buzzerPin,0);
+    digitalWrite(VENTILATEUR_PIN2, LOW);
+    //lcd.clear();
+  }
+
+}
+//FIN SECUIRITE
+
+
+            //GESTION DES LUMIERES
+void controlerLED_RGB(int rouge, int vert, int bleu) {
+  analogWrite(pinRouge, rouge);
+  analogWrite(pinVert, vert);
+  analogWrite(pinBleu, bleu);
+}
+void lumieresManuelTelecomande() {//DEBUT LUMIERES
+  
+    //LUmieres du Salon par infrarouge
+    if ((results.value == 0xFF38C7)) {//ok
+      if (actRGB == 0) {
+        controlerLED_RGB(255, 255, 255);
+         actRGB = 1;
+      } else {
+        controlerLED_RGB(0, 0, 0);
+        actRGB = 0;
+      }
+    }
+    if ((results.value == 0xFF5AA5) && actRGB == 1) { //->
+      count++;
+      if (count > 11) {
+        count = 0; // Réinitialisation du compteur
+      }
+    }
+    else if ((results.value == 0xFF10EF) && actRGB == 1) { //<-
+      count--;
+      if (count < 0) {
+        count = 11; // Aller à la fin de la liste
+      }
+    }
+
+    //Lumieres chambre par infrarouge
+    if (results.value == 0xFF02FD){//5
+      power(reglerRed, reglerVert, reglerBleu);
+    } else if (results.value == 0xFFA25D) {//1
+      redFunction(reglerRed);
+    } else if (results.value == 0xFF629D) {//2
+      vertFunction(reglerVert);
+    } else if (results.value == 0xFFE21D) {//3
+      bleuFunction(reglerBleu);
+    } else if (results.value == 0xFF22DD) {//4
+      if (act == 0) {
+        act = 1;
+        digitalWrite(LED4, HIGH);
+      } else {
+        act = 0;
+        digitalWrite(LED4, LOW);
+      }
+    }
+    else if (red || vert || bleu) {
+      adjustIntensity();
+    }
+  }
+    //Y AVAIT INFRA
+
+
+  // LUmieres Salon par aplaudissements
+void  RGBAuplaudissementEtCouleurs(){
+  
+  //Changement de couleurs du  LUmieres Salon
+  if ((count == 1) && actRGB == 1) {
+    controlerLED_RGB(255, 0, 0); // Rouge
+  }
+  else if ((count == 2) && actRGB == 1) {
+    controlerLED_RGB(0, 255, 0); // vet
+  }
+  else if ((count == 3) && actRGB == 1) { //bleu
+    controlerLED_RGB(0, 0, 255);
+
+  }
+  else if ((count == 4) && actRGB == 1) {
+    controlerLED_RGB(128, 0, 128);// Violet
+  }
+  else if ((count == 5) && actRGB == 1) {
+    controlerLED_RGB(255, 255, 0); // Jaune
+  }
+  else if ((count == 6) && actRGB == 1) {
+    controlerLED_RGB(255, 0, 255); // Magenta
+
+  }
+  else if ((count == 7) && actRGB == 1) {
+    controlerLED_RGB(0, 255, 255); // Cyan
+
+  }
+  else if ((count == 8) && actRGB == 1) {
+    controlerLED_RGB(255, 165, 0); // Orange
+
+  }
+  else if ((count == 9) && actRGB == 1) {
+    controlerLED_RGB(64, 224, 208); // Turquoise
+
+  }
+  else if ((count == 10) && actRGB == 1) {
+    controlerLED_RGB(255, 192, 203); // Rose
+
+  }
+  else if ((count == 11) && actRGB == 1) {
+    controlerLED_RGB(255, 255, 255); // Blanc
+
+  }
+son=digitalRead(sensorAnalogPin);
+  //delay(200);
+  //son=analogRead(sensorAnalogPin);
+  //Serial.print("son ");
+  //Serial.println(son);
+  if (son==HIGH) {
+    if (actRGB == 0) {
+      controlerLED_RGB(255, 255, 255);
+      //delay(100);
+      actRGB = 1;
+    } else {
+      controlerLED_RGB(0, 0, 0);
+      //delay(100);
+       actRGB = 0;
+    }
+  }
+
+} 
+
+  //LUmieres chambre par interupteur
+
+void lumiereManuelInterupteur(){
+  boolean lectureBP1=digitalRead(BP1);  
+  boolean lectureBP2=digitalRead(BP2); 
+  boolean lectureBP3=digitalRead(BP3); 
+  boolean lectureBP4=digitalRead(BP4);
+  delay(150); 
+  if (lectureBP1 == 0) {
+    redFunction(reglerRed);
+  }
+  else if (lectureBP2 == 0) {
+    vertFunction(reglerVert);
+  }
+  else if (lectureBP3 == 0) {
+    bleuFunction(reglerBleu);
+  }
+  else{ 
+  if ((lectureBP4 == 0)&& (digitalRead(LED4)==0)) {
+      digitalWrite(LED4, HIGH);
+      //delay(10);
+      
+    } else if ((lectureBP4 == 0)&& digitalRead(LED4)==1) {
+      //act = 0;
+      
+      digitalWrite(LED4, LOW);
+      //delay(10);
+    }
+  }
+}
+//FIN LUMIERES MANUEL
+
+
+
+void lumieresAutomatique() {
+  //LEDj
+ledj();
+toilette();
+couloir();
+}
+
+//LUMIERE DU JARDIN
+void ledj(){
+  int intensiteLumiere = analogRead(photo);
+  // Si la lumière est trop intense (valeur élevée)
+  if (intensiteLumiere > 800) {
+    analogWrite(LEDj, 0); // Éteindre complètement la LED
+  }
+  // Si la lumière est trop faible (valeur basse)
+  else if (intensiteLumiere < 200) {
+    analogWrite(LEDj, 255); // Allumer la LED au maximum
+  }
+  // Sinon, ajuster l'intensité en fonction de la valeur lue
+  else {
+    int intensiteLED = map(intensiteLumiere, 200, 800, 255, 0);
+    analogWrite(LEDj, intensiteLED);
+  }
+Serial.println("PHOToresistance: ");
+  Serial.println(intensiteLumiere);
+  //delay(3000);
+
+  //delay(15); // Attendre un court instant avant de refaire la lecture
+}
+
+
+//LUMIERE DU TOILETTE
+void toilette(){
+  distance=sr04.Distance();
+  if(distance<=5){
+    digitalWrite(LEDt,HIGH);
+  }else{
+    digitalWrite(LEDt,LOW);
+  }
+}
+
+
+
+//LUMIERE DU COULOIR
+void couloir(){
+  mouvement=digitalRead(pirPin);
+  
+  if(mouvement==HIGH){
+    digitalWrite(LEDc,HIGH);
+    delay(2000);
+  }else{
+    digitalWrite(LEDc,LOW);
+  }
+  
+}
+
+
+
+//LES FONCTIONS DES LUMIERES
+//Gestion de l intensite des Lumiere des chambres
+void power(int intensity1, int intensity2, int intensity3) {
+  if (!tous) {
+    tous = true;
+    analogWrite(LED1, intensity1);
+    analogWrite(LED2, intensity2);
+    analogWrite(LED3, intensity3);
+ 
+  } else {
+    tous = false;
+    analogWrite(LED1, 0);
+    analogWrite(LED2, 0);
+    analogWrite(LED3, 0);
+   
+  }
+  red = false;
+  vert = false;
+  bleu = false;
+}
+
+void redFunction(int intensity1) {
+  if (!red) {
+    red = true;
+    analogWrite(LED1, intensity1);
+    
+  } else {
+    red = false;
+    analogWrite(LED1, 0);
+    
+  }
+  vert = false;
+  bleu = false;
+}
+
+void vertFunction(int intensity2) {
+  if (!vert) {
+    vert = true;
+    analogWrite(LED2, intensity2);
+    
+  } else {
+    vert = false;
+    analogWrite(LED2, 0);
+    
+  }
+  red = false;
+  bleu = false;
+}
+
+void bleuFunction(int intensity3) {
+  if (!bleu) {
+    bleu = true;
+    analogWrite(LED3, intensity3);
+    
+  } else {
+    bleu = false;
+    analogWrite(LED3, 0);
+    
+  }
+  red = false;
+  vert = false;
+}
+
+void adjustIntensity() {
+  if (results.value == 0xFF4AB5  ) {  //
+    decreaseIntensity();
+  } else if (results.value == 0xFF18E7) {  //
+    increaseIntensity();
+  }
+}
+
+void decreaseIntensity() {
+  if (red || vert || bleu) {
+    if (red && reglerRed >= 50) {
+      reglerRed -= 50;
+      analogWrite(LED1, reglerRed);
+    }
+    if (vert && reglerVert >= 50) {
+      reglerVert -= 50;
+      analogWrite(LED2, reglerVert);
+    }
+    if (bleu && reglerBleu >= 50) {
+      reglerBleu -= 50;
+      analogWrite(LED3, reglerBleu);
+    }
+  }
+}
+
+void increaseIntensity() {
+  if (red || vert || bleu) {
+    if (red && reglerRed < 255) {
+      reglerRed += 50;
+      analogWrite(LED1, reglerRed);
+    }
+    if (vert && reglerVert < 255) {
+      reglerVert += 50;
+      analogWrite(LED2, reglerVert);
+    }
+    if (bleu && reglerBleu < 255) {
+      reglerBleu += 50;
+      analogWrite(LED3, reglerBleu);
+    }
+  }
+
+}
+
+
+ 
+ 
